@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Control de Materiales</title>
+
+<style>
+    body { font-family: Arial; margin: 20px; }
+
+    /* --- LOGIN --- */
+    #loginBox {
+        max-width: 350px;
+        margin: 80px auto;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-radius: 10px;
+        background: #f9f9f9;
+        text-align: center;
+    }
+    input, select, button { padding: 8px; margin: 5px; }
+    table { border-collapse: collapse; margin-top: 15px; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #f0f0f0; }
+</style>
+</head>
+
+<body>
+
+<!-- ====================== LOGIN ====================== -->
+<div id="loginBox">
+    <h2>🔐 Acceso al sistema</h2>
+    <input type="text" id="user" placeholder="Usuario" /><br>
+    <input type="password" id="pass" placeholder="Contraseña" /><br>
+    <button onclick="login()">Entrar</button>
+    <p id="msg" style="color:red;"></p>
+</div>
+
+<!-- ====================== SISTEMA ====================== -->
+<div id="app" style="display:none;">
+
+<h2>📦 Cargar archivo Excel (PartNum / Linea)</h2>
+<input type="file" id="excelFile" accept=".xlsx,.xls" />
+
+<h3>Seleccionar PartNum</h3>
+<select id="partSelect"></select>
+
+<h3>Seleccionar Línea</h3>
+<select id="lineSelect"></select>
+
+<button id="addPending" style="display:none;">Agregar a pendientes</button>
+
+<hr>
+
+<h2>📋 Lista de materiales pendientes</h2>
+
+<!-- Campo para escanear -->
+<input type="text" id="scanInput" placeholder="Escanear PartNum" />
+
+<table id="pendingTable">
+    <thead>
+        <tr>
+            <th>PartNum</th>
+            <th>Línea</th>
+            <th>Fecha/Hora solicitud</th>
+            <th>Tiempo transcurrido</th>
+            <th>Acción</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<hr>
+
+<button id="downloadExcel">📥 Descargar historial (Excel)</button>
+
+</div> <!-- CIERRE DEL SISTEMA -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script>
+
+/* ======================================================
+   LOGIN
+====================================================== */
+function login() {
+    const user = document.getElementById("user").value.trim();
+    const pass = document.getElementById("pass").value.trim();
+
+    if (user === "Julian" && pass === "Electric") {
+        document.getElementById("loginBox").style.display = "none";
+        document.getElementById("app").style.display = "block";
+    } else {
+        document.getElementById("msg").innerText = "Usuario o contraseña incorrectos.";
+    }
+}
+
+/* ======================================================
+   SISTEMA DE CONTROL DE MATERIALES
+====================================================== */
+
+let dataList = [];
+let pendingList = [];
+let deliveredList = [];
+
+// ===========================
+// CARGAR EXCEL
+// ===========================
+document.getElementById("excelFile").addEventListener("change", function(e){
+    const file = e.target.files[0];
+    const reader = new FileReader();
+
+    reader.onload = function(evt){
+        const binary = evt.target.result;
+        const workbook = XLSX.read(binary, { type: "binary" });
+
+        const firstSheet = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheet];
+
+        const data = XLSX.utils.sheet_to_json(sheet);
+
+        dataList = data.map(row => ({
+            PartNum: row.PartNum,
+            Linea: row.Linea
+        }));
+
+        cargarPartNums();
+        cargarLineas();
+    };
+
+    reader.readAsBinaryString(file);
+});
+
+// ===========================
+// SELECTS
+// ===========================
+function cargarPartNums(){
+    const select = document.getElementById("partSelect");
+    select.innerHTML = "";
+
+    const uniques = [...new Set(dataList.map(x => x.PartNum))];
+
+    select.innerHTML =
+        "<option value=''>--Seleccione--</option>" +
+        uniques.map(v => `<option value="${v}">${v}</option>`).join("");
+}
+
+function cargarLineas(){
+    const select = document.getElementById("lineSelect");
+    select.innerHTML = "";
+
+    const uniques = [...new Set(dataList.map(x => x.Linea))];
+
+    select.innerHTML =
+        "<option value=''>--Seleccione--</option>" +
+        uniques.map(v => `<option value="${v}">${v}</option>`).join("");
+}
+
+document.getElementById("partSelect").addEventListener("change", checkSelections);
+document.getElementById("lineSelect").addEventListener("change", checkSelections);
+
+function checkSelections(){
+    const p = document.getElementById("partSelect").value;
+    const l = document.getElementById("lineSelect").value;
+
+    document.getElementById("addPending").style.display =
+        (p !== "" && l !== "") ? "inline-block" : "none";
+}
+
+// ===========================
+// AGREGAR A PENDIENTES
+// ===========================
+document.getElementById("addPending").addEventListener("click", () => {
+    const p = document.getElementById("partSelect").value;
+    const l = document.getElementById("lineSelect").value;
+
+    pendingList.push({
+        PartNum: p,
+        Linea: l,
+        timestamp: new Date().getTime()
+    });
+
+    renderPendingList();
+});
+
+// ===========================
+// RENDERIZAR TABLA
+// ===========================
+function renderPendingList(){
+    const tbody = document.querySelector("#pendingTable tbody");
+    tbody.innerHTML = "";
+
+    pendingList.forEach((item, index) => {
+        const tr = document.createElement("tr");
+        const tiempo = calcularTiempo(item.timestamp);
+
+        tr.innerHTML = `
+            <td>${item.PartNum}</td>
+            <td>${item.Linea}</td>
+            <td>${new Date(item.timestamp).toLocaleString()}</td>
+            <td>${tiempo}</td>
+            <td><button onclick="entregar(${index})">Entregado</button></td>
+        `;
+
+        tbody.appendChild(tr);
+    });
+}
+
+setInterval(renderPendingList, 1000);
+
+// ===========================
+// CALCULAR TIEMPO
+// ===========================
+function calcularTiempo(start){
+    const now = Date.now();
+    const diff = now - start;
+
+    const mins = Math.floor(diff / 60000);
+    const secs = Math.floor((diff % 60000) / 1000);
+
+    return `${mins}m ${secs}s`;
+}
+
+// ===========================
+// ENTREGAR MATERIAL
+// ===========================
+function entregar(idx){
+    const item = pendingList[idx];
+    const entregaHora = new Date().getTime();
+
+    deliveredList.push({
+        PartNum: item.PartNum,
+        Linea: item.Linea,
+        FechaSolicitud: new Date(item.timestamp).toLocaleString(),
+        FechaEntrega: new Date(entregaHora).toLocaleString(),
+        TiempoEsperaSeg: Math.floor((entregaHora - item.timestamp) / 1000)
+    });
+
+    pendingList.splice(idx, 1);
+    renderPendingList();
+}
+
+// ===========================
+// ESCANEO
+// ===========================
+document.getElementById("scanInput").addEventListener("change", function(){
+    const scanned = this.value.trim();
+    this.value = "";
+
+    const idx = pendingList.findIndex(x => x.PartNum === scanned);
+
+    if(idx >= 0){
+        entregar(idx);
+        alert("Material entregado: " + scanned);
+    }
+});
+
+// ===========================
+// DESCARGAR HISTORIAL
+// ===========================
+document.getElementById("downloadExcel").addEventListener("click", () => {
+
+    if (deliveredList.length === 0) {
+        alert("No hay registros entregados aún.");
+        return;
+    }
+
+    const dataToExport = deliveredList.map(r => ({
+        "PartNum": String(r.PartNum),
+        "Linea": String(r.Linea),
+        "Fecha Solicitud": String(r.FechaSolicitud),
+        "Fecha Entrega": String(r.FechaEntrega),
+        "Tiempo de Espera (segundos)": String(r.TiempoEsperaSeg)
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+
+    ws["!cols"] = [
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 25 },
+        { wch: 25 },
+        { wch: 15 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Historial");
+
+    XLSX.writeFile(wb, "Historial_Materiales_Entregados.xlsx");
+});
+</script>
+
+</body>
+</html>
